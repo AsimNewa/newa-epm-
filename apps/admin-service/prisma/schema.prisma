@@ -1,0 +1,368 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== MULTI-TENANCY ====================
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  status    String   @default("active") // active, suspended, deleted
+  schema    String   @unique // Database schema name for this tenant
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  users              User[]
+  roles              Role[]
+  periods            Period[]
+  entities           Entity[]
+  chartOfAccounts    ChartOfAccount[]
+  currencies         Currency[]
+  exchangeRates      ExchangeRate[]
+  dimensions         Dimension[]
+  scenarios          Scenario[]
+  trialBalances      TrialBalance[]
+  consolidations     Consolidation[]
+
+  @@index([slug])
+  @@index([status])
+}
+
+// ==================== AUTHENTICATION & AUTHORIZATION ====================
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  email     String
+  username  String
+  password  String   // bcrypt hash
+  fullName  String
+  status    String   @default("active") // active, inactive, locked
+  mfaEnabled Boolean @default(false)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+  lastLogin DateTime?
+
+  // Relations
+  tenant  Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roles   UserRole[]
+  logs    AuditLog[]
+
+  @@unique([tenantId, email])
+  @@unique([tenantId, username])
+  @@index([tenantId])
+  @@index([status])
+}
+
+model Role {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  name      String   // e.g., "Entity Finance", "Group Controller", "System Admin"
+  status    String   @default("active")
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users       UserRole[]
+  permissions Permission[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model UserRole {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  roleId    String   @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+}
+
+model Permission {
+  id     String @id @default(uuid()) @db.Uuid
+  roleId String @db.Uuid
+  action String // e.g., "tb:upload", "tb:approve", "consolidation:run"
+  resource String? // Optional resource type
+
+  // Relations
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, action])
+  @@index([roleId])
+}
+
+// ==================== MASTER DATA ====================
+model Period {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  name      String   // e.g., "Dec 2024"
+  period    String   // e.g., "2024-12"
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  status    String   @default("draft") // draft, open, submitted, locked
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trialBalances  TrialBalance[]
+  consolidations Consolidation[]
+
+  @@unique([tenantId, period])
+  @@index([tenantId])
+  @@index([status])
+}
+
+model Entity {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  code      String   // Entity code (e.g., "ENTITY_01")
+  name      String
+  country   String?
+  currency  String   @db.VarChar(3) // ISO currency code
+  status    String   @default("active")
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  groups  GroupEntity[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model ConsolidationGroup {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  name      String   // e.g., "Global Group"
+  status    String   @default("active")
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  entities GroupEntity[]
+
+  @@index([tenantId])
+}
+
+model GroupEntity {
+  id           String   @id @default(uuid()) @db.Uuid
+  groupId      String   @db.Uuid
+  entityId     String   @db.Uuid
+  ownership    Decimal  @db.Decimal(5, 2) // 0 to 100 (percentage)
+  consolidationMethod String @default("FULL") // FULL, EQUITY, PROPORTIONAL
+  createdAt    DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  group  ConsolidationGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  entity Entity             @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, entityId])
+  @@index([groupId])
+  @@index([entityId])
+}
+
+model Currency {
+  id      String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  code    String @db.VarChar(3) // ISO currency code
+  name    String
+  active  Boolean @default(true)
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model ExchangeRate {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  fromCurrency String   @db.VarChar(3)
+  toCurrency   String   @db.VarChar(3)
+  rateDate     DateTime @db.Date
+  rate         Decimal  @db.Decimal(18, 8)
+  rateType     String   @default("SPOT") // SPOT, AVERAGE, CLOSING
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  updatedAt    DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, fromCurrency, toCurrency, rateDate, rateType])
+  @@index([tenantId, rateDate])
+}
+
+model ChartOfAccount {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  accountCode  String
+  accountName  String
+  accountType  String // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  parentCode   String?
+  status       String   @default("active")
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  updatedAt    DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant  Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, accountCode])
+  @@index([tenantId])
+  @@index([accountType])
+}
+
+model Dimension {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  name        String
+  type        String   // e.g., "COST_CENTER", "DEPARTMENT"
+  status      String   @default("active")
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant  Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  members DimensionMember[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model DimensionMember {
+  id          String   @id @default(uuid()) @db.Uuid
+  dimensionId String   @db.Uuid
+  code        String
+  name        String
+  status      String   @default("active")
+  createdAt   DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  dimension Dimension @relation(fields: [dimensionId], references: [id], onDelete: Cascade)
+
+  @@unique([dimensionId, code])
+  @@index([dimensionId])
+}
+
+model Scenario {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  name     String // e.g., "Actual", "Budget", "Forecast"
+  code     String
+  status   String @default("active")
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+// ==================== TRIAL BALANCE & DATA ====================
+model TrialBalance {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  periodId     String   @db.Uuid
+  entityId     String?  @db.Uuid
+  importId     String?
+  status       String   @default("draft") // draft, submitted, approved, locked
+  totalDebits  Decimal  @db.Decimal(20, 6)
+  totalCredits Decimal  @db.Decimal(20, 6)
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  updatedAt    DateTime @updatedAt @db.Timestamptz
+  submittedAt  DateTime?
+  approvedAt   DateTime?
+
+  // Relations
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  period  Period  @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  rows    TrialBalanceRow[]
+
+  @@unique([tenantId, periodId, entityId])
+  @@index([tenantId, periodId])
+  @@index([status])
+}
+
+model TrialBalanceRow {
+  id              String   @id @default(uuid()) @db.Uuid
+  trialBalanceId  String   @db.Uuid
+  accountCode     String
+  accountName     String
+  debit           Decimal  @db.Decimal(20, 6)
+  credit          Decimal  @db.Decimal(20, 6)
+  createdAt       DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  trialBalance TrialBalance @relation(fields: [trialBalanceId], references: [id], onDelete: Cascade)
+
+  @@index([trialBalanceId])
+  @@index([accountCode])
+}
+
+// ==================== CONSOLIDATION ====================
+model Consolidation {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  periodId  String   @db.Uuid
+  status    String   @default("draft") // draft, running, completed, error
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  period  Period  @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  results ConsolidationResult[]
+
+  @@index([tenantId, periodId])
+  @@index([status])
+}
+
+model ConsolidationResult {
+  id              String   @id @default(uuid()) @db.Uuid
+  consolidationId String   @db.Uuid
+  accountCode     String
+  amount          Decimal  @db.Decimal(20, 6)
+  currency        String   @db.VarChar(3)
+
+  // Relations
+  consolidation Consolidation @relation(fields: [consolidationId], references: [id], onDelete: Cascade)
+
+  @@index([consolidationId])
+  @@index([accountCode])
+}
+
+// ==================== AUDIT & LOGGING ====================
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  userId    String   @db.Uuid
+  action    String   // e.g., "TB_SUBMITTED", "CONSOLIDATION_RUN"
+  entity    String   // e.g., "TrialBalance", "Consolidation"
+  entityId  String
+  details   Json?
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([createdAt])
+}

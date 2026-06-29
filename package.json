@@ -1,0 +1,35 @@
+{
+  "name": "newa-epm",
+  "version": "0.1.0",
+  "description": "NEWA Enterprise Performance Management - Cloud-native financial consolidation and reporting platform",
+  "private": true,
+  "scripts": {
+    "dev": "lerna run dev --parallel",
+    "build": "lerna run build",
+    "test": "lerna run test",
+    "test:e2e": "lerna run test:e2e",
+    "lint": "lerna run lint",
+    "db:migrate": "npm -w apps/admin-service run db:migrate",
+    "db:seed": "npm -w apps/admin-service run db:seed",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up",
+    "docker:down": "docker-compose down",
+    "docker:reset": "docker-compose down -v && docker-compose up"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "lerna": "^7.4.2",
+    "typescript": "^5.3.3",
+    "prettier": "^3.1.1",
+    "eslint": "^8.55.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}
