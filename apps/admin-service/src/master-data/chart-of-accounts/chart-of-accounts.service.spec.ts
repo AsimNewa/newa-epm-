@@ -79,6 +79,13 @@ describe('ChartOfAccountsService', () => {
         accountNature: 'DEBIT',
         parentCode: undefined,
         rollupWeight: 1,
+        statementType: undefined,
+        cashFlowCategory: undefined,
+        ifrsReference: undefined,
+        requiresIntercompanyRecon: false,
+        requiresOtherRecon: false,
+        rateType: null,
+        customFields: undefined,
       },
     });
   });

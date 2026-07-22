@@ -7,6 +7,7 @@
     "dev": "lerna run dev --parallel",
     "build": "lerna run build",
     "test": "lerna run test",
+    "test:cov": "lerna run test:cov",
     "test:e2e": "lerna run test:e2e",
     "lint": "lerna run lint",
     "db:migrate": "npm -w apps/admin-service run db:migrate",

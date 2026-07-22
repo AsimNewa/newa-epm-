@@ -48,8 +48,7 @@ describe('OwnershipService', () => {
 
     // The mocked $transaction callback receives the same delegate mocks as "tx" — good enough
     // for unit tests since we're not exercising real Prisma transaction semantics here.
-    let prisma: Record<string, unknown>;
-    prisma = {
+    const prisma: Record<string, unknown> = {
       consolidationGroup,
       groupEntity,
       ownershipPeriod,
