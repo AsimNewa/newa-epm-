@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "lerna run dev --parallel",
     "build": "lerna run build",
+    "pretest": "npm run build --workspace=packages/shared",
     "test": "lerna run test",
+    "pretest:cov": "npm run build --workspace=packages/shared",
     "test:cov": "lerna run test:cov",
     "test:e2e": "lerna run test:e2e",
     "lint": "lerna run lint",

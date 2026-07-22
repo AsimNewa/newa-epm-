@@ -4,6 +4,7 @@
   "description": "NEWA EPM Admin Service - Tenant provisioning, user management, configuration",
   "main": "dist/main.js",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
