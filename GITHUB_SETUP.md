@@ -13,7 +13,7 @@ Before proceeding, ensure you have:
 
 1. **Go to GitHub**: https://github.com/new
 2. **Repository name**: `newa-epm`
-3. **Description**: 
+3. **D escription**: 
    ```
    NEWA Enterprise Performance Management - Cloud-native financial consolidation and reporting platform
    ```

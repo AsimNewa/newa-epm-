@@ -18,40 +18,104 @@ model Tenant {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  users              User[]
-  roles              Role[]
-  periods            Period[]
-  entities           Entity[]
-  chartOfAccounts    ChartOfAccount[]
-  currencies         Currency[]
-  exchangeRates      ExchangeRate[]
-  dimensions         Dimension[]
-  scenarios          Scenario[]
-  trialBalances      TrialBalance[]
-  consolidations     Consolidation[]
+  users                  User[]
+  roles                  Role[]
+  fiscalYears            FiscalYear[]
+  periods                Period[]
+  entities               Entity[]
+  consolidationGroups    ConsolidationGroup[]
+  ownershipPeriods       OwnershipPeriod[]
+  chartOfAccounts        ChartOfAccount[]
+  currencies             Currency[]
+  exchangeRates          ExchangeRate[]
+  dimensions             Dimension[]
+  scenarios              Scenario[]
+  trialBalances          TrialBalance[]
+  consolidations         Consolidation[]
+  auditLogs              AuditLog[]
+  themeSetting           ThemeSetting?
+  tenantSettings         TenantSettings?
+  customFieldDefinitions CustomFieldDefinition[]
+  fieldGroupingConfigs   FieldGroupingConfig[]
+  rateTypes              RateType[]
+  dimensionAccountRules  DimensionAccountRule[]
 
   @@index([slug])
   @@index([status])
 }
 
-// ==================== AUTHENTICATION & AUTHORIZATION ====================
-model User {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid
-  email     String
-  username  String
-  password  String   // bcrypt hash
-  fullName  String
-  status    String   @default("active") // active, inactive, locked
-  mfaEnabled Boolean @default(false)
-  createdAt DateTime @default(now()) @db.Timestamptz
-  updatedAt DateTime @updatedAt @db.Timestamptz
-  lastLogin DateTime?
+// ==================== BRANDING / THEME ====================
+model ThemeSetting {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @unique @db.Uuid
+  presetName      String   @default("newa-dark") // newa-dark, newa-light, custom
+  logoUrl         String?  @db.Text // data URL (base64) or external URL
+  primaryColor    String   @default("#14213D")
+  secondaryColor  String   @default("#8B93A0")
+  accentColor     String   @default("#C9CED6")
+  backgroundColor String   @default("#0F1B2D")
+  surfaceColor    String   @default("#16213E")
+  textColor       String   @default("#FFFFFF")
+  updatedAt       DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  tenant  Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  roles   UserRole[]
-  logs    AuditLog[]
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+// System Settings screen (spec 3.1.5): base currency, password policy, MFA default, notification/SMTP, email branding
+model TenantSettings {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @unique @db.Uuid
+
+  // Base Currency
+  baseCurrencyCode String? @db.VarChar(3)
+
+  // Password Policy
+  passwordMinLength        Int     @default(12)
+  passwordRequireUppercase Boolean @default(true)
+  passwordRequireNumber    Boolean @default(true)
+  passwordRequireSymbol    Boolean @default(false)
+  passwordExpiryDays       Int? // null = never expires
+  lockoutThreshold         Int     @default(5)
+
+  // MFA Policy (tenant-wide default; per-role override lives on Role.mfaRequired)
+  mfaRequiredByDefault Boolean @default(false)
+
+  // Notification Settings (SMTP)
+  smtpHost        String?
+  smtpPort        Int?
+  smtpUsername    String?
+  smtpPassword    String? @db.Text // never returned by the API after being set; see TenantSettingsService
+  smtpFromAddress String?
+  smtpFromName    String?
+
+  // Branding (email header; logo/colours live in ThemeSetting)
+  emailHeaderText String?
+
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+// ==================== AUTHENTICATION & AUTHORIZATION ====================
+model User {
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @db.Uuid
+  email      String
+  username   String
+  password   String // bcrypt hash
+  fullName   String
+  status     String    @default("active") // active, inactive, locked
+  mfaEnabled Boolean   @default(false)
+  createdAt  DateTime  @default(now()) @db.Timestamptz
+  updatedAt  DateTime  @updatedAt @db.Timestamptz
+  lastLogin  DateTime?
+
+  // Relations
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roles  UserRole[]
+  logs   AuditLog[]
 
   @@unique([tenantId, email])
   @@unique([tenantId, username])
@@ -60,27 +124,32 @@ model User {
 }
 
 model Role {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid
-  name      String   // e.g., "Entity Finance", "Group Controller", "System Admin"
-  status    String   @default("active")
-  createdAt DateTime @default(now()) @db.Timestamptz
-  updatedAt DateTime @updatedAt @db.Timestamptz
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  name        String // e.g., "Entity Finance", "Group Controller", "System Admin"
+  description String?
+  isSystem    Boolean  @default(false) // system roles cannot be modified or deleted
+  mfaRequired Boolean  @default(false) // MFA Policy: required/optional by role (spec 3.1.5)
+  status      String   @default("active")
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   users       UserRole[]
-  permissions Permission[]
+  permissions RolePermission[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
 }
 
 model UserRole {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid
-  roleId    String   @db.Uuid
-  createdAt DateTime @default(now()) @db.Timestamptz
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  roleId      String   @db.Uuid
+  entityScope String[] @default([]) // entity IDs this role grant is scoped to; empty = all entities
+  groupScope  String[] @default([]) // consolidation group IDs this role grant is scoped to; empty = all groups
+  createdAt   DateTime @default(now()) @db.Timestamptz
 
   // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -91,98 +160,248 @@ model UserRole {
   @@index([roleId])
 }
 
+// Global catalog of permissions (module x action), not tenant-scoped
 model Permission {
-  id     String @id @default(uuid()) @db.Uuid
-  roleId String @db.Uuid
-  action String // e.g., "tb:upload", "tb:approve", "consolidation:run"
-  resource String? // Optional resource type
+  id          String  @id @default(uuid()) @db.Uuid
+  module      String // e.g. admin, master-data, consolidation, reporting, planning
+  action      String // e.g. view, create, edit, delete, approve, lock
+  description String?
 
   // Relations
-  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  roles RolePermission[]
 
-  @@unique([roleId, action])
-  @@index([roleId])
+  @@unique([module, action])
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  // Relations
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+// Tenant-defined custom fields on master data (everything except Users/Roles/Permissions).
+// Definitions are tenant-wide (not period-scoped); values are stored on each record's customFields JSON column.
+model CustomFieldDefinition {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  entityType    String // ENTITY, CHART_OF_ACCOUNT, CURRENCY, DIMENSION, CONSOLIDATION_GROUP
+  fieldKey      String // slug used as the JSON key, e.g. "costCenterCode"
+  label         String
+  fieldType     String // TEXT, NUMBER, DATE, BOOLEAN, SELECT
+  selectOptions String[] @default([]) // only used when fieldType = SELECT
+  required      Boolean  @default(false)
+  displayOrder  Int      @default(0)
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  updatedAt     DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, entityType, fieldKey])
+  @@index([tenantId, entityType])
+}
+
+// Marks any field (standard or custom) as a management reporting dimension for a given entity type.
+// Used later in consolidation/reporting group-by logic. Fieldkeys:
+//   Standard fields: "code" | "name" | "country" | "currency" | "status"
+//   Custom fields:   "customFields.<fieldKey>"  (e.g. "customFields.costCenter")
+model FieldGroupingConfig {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  entityType   String // ENTITY, CHART_OF_ACCOUNT, DIMENSION, CONSOLIDATION_GROUP …
+  fieldKey     String // identifies the field; see comment above
+  isGrouping   Boolean  @default(false)
+  displayOrder Int      @default(0)
+  updatedAt    DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, entityType, fieldKey])
+  @@index([tenantId, entityType])
+}
+
+// ==================== CALENDAR & PERIOD CONTROL ====================
+// A fiscal year is a wizard that generates a run of periods (12 regular + n adjustment periods).
+model FiscalYear {
+  id                String   @id @default(uuid()) @db.Uuid
+  tenantId          String   @db.Uuid
+  startYear         Int // calendar year the fiscal year begins in
+  startMonth        Int // 1-12
+  regularPeriods    Int      @default(12) // standard monthly periods
+  adjustmentPeriods Int      @default(0) // n extra adjustment/audit periods appended after the regular periods
+  status            String   @default("active") // active, closed
+  createdAt         DateTime @default(now()) @db.Timestamptz
+  updatedAt         DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  periods Period[]
+
+  @@unique([tenantId, startYear, startMonth])
+  @@index([tenantId])
 }
 
 // ==================== MASTER DATA ====================
 model Period {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid
-  name      String   // e.g., "Dec 2024"
-  period    String   // e.g., "2024-12"
-  startDate DateTime @db.Date
-  endDate   DateTime @db.Date
-  status    String   @default("draft") // draft, open, submitted, locked
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  fiscalYearId String?  @db.Uuid // null for manually created, ad-hoc periods
+  name         String // e.g., "Dec 2024"
+  period       String // code, e.g. "2024-012" (auto) or any alphanumeric value when set manually
+  periodNumber String // the NNN component of the code; numeric for auto-generated periods, alphanumeric for manual/adjustment periods
+  isAdjustment Boolean  @default(false)
+  startDate    DateTime @db.Date
+  endDate      DateTime @db.Date
+  status       String   @default("draft") // draft, open, submitted, locked
+
+  // Opening balances default to the prior chronological period's closing balance, but can be
+  // manually re-pointed (e.g. a quarterly/yearly period opening from a different period).
+  openingBalanceSourcePeriodId String? @db.Uuid
+  // The period whose master data (entities, COA, dimensions, ownership) was copied when this period was created.
+  copiedFromPeriodId           String? @db.Uuid
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  trialBalances  TrialBalance[]
-  consolidations Consolidation[]
+  tenant                 Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fiscalYear             FiscalYear?            @relation(fields: [fiscalYearId], references: [id], onDelete: SetNull)
+  openingBalanceSource   Period?                @relation("OpeningBalanceSource", fields: [openingBalanceSourcePeriodId], references: [id], onDelete: SetNull)
+  openingBalanceFor      Period[]               @relation("OpeningBalanceSource")
+  copiedFrom             Period?                @relation("CopiedFrom", fields: [copiedFromPeriodId], references: [id], onDelete: SetNull)
+  copiedTo               Period[]               @relation("CopiedFrom")
+  trialBalances          TrialBalance[]
+  consolidations         Consolidation[]
+  entities               Entity[]
+  chartOfAccounts        ChartOfAccount[]
+  dimensions             Dimension[]
+  consolidationGroups    ConsolidationGroup[]
+  ownershipEffectiveFrom OwnershipPeriod[]      @relation("OwnershipEffectiveFrom")
+  ownershipEffectiveTo   OwnershipPeriod[]      @relation("OwnershipEffectiveTo")
+  dimensionAccountRules  DimensionAccountRule[]
 
   @@unique([tenantId, period])
   @@index([tenantId])
   @@index([status])
+  @@index([fiscalYearId])
 }
 
 model Entity {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid
-  code      String   // Entity code (e.g., "ENTITY_01")
-  name      String
-  country   String?
-  currency  String   @db.VarChar(3) // ISO currency code
-  status    String   @default("active")
-  createdAt DateTime @default(now()) @db.Timestamptz
-  updatedAt DateTime @updatedAt @db.Timestamptz
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  periodId     String   @db.Uuid // all master data lives under a period
+  code         String // Entity code (e.g., "ENTITY_01")
+  name         String
+  country      String?
+  currency     String   @db.VarChar(3) // ISO currency code
+  status       String   @default("active")
+  customFields Json?
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  updatedAt    DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  groups  GroupEntity[]
+  tenant                Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  period                Period               @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  groups                GroupEntity[]
+  parentOfGroups        ConsolidationGroup[] @relation("GroupParentEntity")
+  ownershipAsParent     OwnershipPeriod[]    @relation("OwnershipParent")
+  ownershipAsSubsidiary OwnershipPeriod[]    @relation("OwnershipSubsidiary")
 
-  @@unique([tenantId, code])
+  @@unique([tenantId, periodId, code])
   @@index([tenantId])
+  @@index([periodId])
 }
 
 model ConsolidationGroup {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid
-  name      String   // e.g., "Global Group"
-  status    String   @default("active")
-  createdAt DateTime @default(now()) @db.Timestamptz
-  updatedAt DateTime @updatedAt @db.Timestamptz
+  id                String   @id @default(uuid()) @db.Uuid
+  tenantId          String   @db.Uuid
+  periodId          String   @db.Uuid // all master data lives under a period
+  code              String
+  name              String // e.g., "Global Group"
+  reportingCurrency String?  @db.VarChar(3)
+  parentEntityId    String?  @db.Uuid // the consolidating parent entity
+  status            String   @default("active")
+  customFields      Json?
+  createdAt         DateTime @default(now()) @db.Timestamptz
+  updatedAt         DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  entities GroupEntity[]
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  period           Period            @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  parentEntity     Entity?           @relation("GroupParentEntity", fields: [parentEntityId], references: [id])
+  members          GroupEntity[]
+  ownershipPeriods OwnershipPeriod[]
 
+  @@unique([tenantId, periodId, code])
   @@index([tenantId])
+  @@index([periodId])
 }
 
 model GroupEntity {
-  id           String   @id @default(uuid()) @db.Uuid
-  groupId      String   @db.Uuid
-  entityId     String   @db.Uuid
-  ownership    Decimal  @db.Decimal(5, 2) // 0 to 100 (percentage)
-  consolidationMethod String @default("FULL") // FULL, EQUITY, PROPORTIONAL
-  createdAt    DateTime @default(now()) @db.Timestamptz
+  id                  String    @id @default(uuid()) @db.Uuid
+  groupId             String    @db.Uuid
+  entityId            String    @db.Uuid
+  consolidationMethod String    @default("FULL") // FULL, EQUITY, PROPORTIONATE, COST
+  effectiveFrom       DateTime  @db.Date
+  effectiveTo         DateTime? @db.Date
+  createdAt           DateTime  @default(now()) @db.Timestamptz
 
   // Relations
   group  ConsolidationGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
   entity Entity             @relation(fields: [entityId], references: [id], onDelete: Cascade)
 
-  @@unique([groupId, entityId])
+  @@unique([groupId, entityId, effectiveFrom])
   @@index([groupId])
   @@index([entityId])
 }
 
+// Period-based direct/effective/NCI ownership between a parent and subsidiary entity within a group
+model OwnershipPeriod {
+  id                    String    @id @default(uuid()) @db.Uuid
+  tenantId              String    @db.Uuid
+  groupId               String    @db.Uuid
+  parentEntityId        String    @db.Uuid
+  subsidiaryEntityId    String    @db.Uuid
+  directPercentage      Decimal   @db.Decimal(8, 4)
+  effectivePercentage   Decimal?  @db.Decimal(8, 4)
+  nciPercentage         Decimal?  @db.Decimal(8, 4)
+  effectiveFromPeriodId String    @db.Uuid // FK periods.id — the fiscal period this stake takes effect from
+  effectiveToPeriodId   String?   @db.Uuid // FK periods.id — nullable; the last period this stake applies to
+  acquisitionCost       Decimal?  @db.Decimal(20, 6)
+  acquisitionDate       DateTime? @db.Date
+  createdAt             DateTime  @default(now()) @db.Timestamptz
+
+  // Relations
+  tenant              Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  group               ConsolidationGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  parentEntity        Entity             @relation("OwnershipParent", fields: [parentEntityId], references: [id], onDelete: Cascade)
+  subsidiaryEntity    Entity             @relation("OwnershipSubsidiary", fields: [subsidiaryEntityId], references: [id], onDelete: Cascade)
+  effectiveFromPeriod Period             @relation("OwnershipEffectiveFrom", fields: [effectiveFromPeriodId], references: [id], onDelete: Cascade)
+  effectiveToPeriod   Period?            @relation("OwnershipEffectiveTo", fields: [effectiveToPeriodId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, groupId, parentEntityId, subsidiaryEntityId, effectiveFromPeriodId])
+  @@index([tenantId])
+  @@index([groupId])
+  @@index([parentEntityId])
+  @@index([subsidiaryEntityId])
+  @@index([effectiveFromPeriodId])
+  @@index([effectiveToPeriodId])
+}
+
 model Currency {
-  id      String @id @default(uuid()) @db.Uuid
-  tenantId String @db.Uuid
-  code    String @db.VarChar(3) // ISO currency code
-  name    String
-  active  Boolean @default(true)
+  id           String  @id @default(uuid()) @db.Uuid
+  tenantId     String  @db.Uuid
+  code         String  @db.VarChar(3) // ISO currency code
+  name         String
+  active       Boolean @default(true)
+  customFields Json?
 
   // Relations
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -209,40 +428,87 @@ model ExchangeRate {
   @@index([tenantId, rateDate])
 }
 
+model RateType {
+  id                  String   @id @default(uuid()) @db.Uuid
+  tenantId            String   @db.Uuid
+  code                String // e.g. CLOSING, AVERAGE, HISTORICAL
+  name                String // e.g. "Closing Rate", "Average Rate"
+  description         String?
+  defaultAccountTypes String[] @default([]) // ASSET | LIABILITY | EQUITY | REVENUE | EXPENSE
+  createdAt           DateTime @default(now()) @db.Timestamptz
+  updatedAt           DateTime @updatedAt @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
 model ChartOfAccount {
-  id           String   @id @default(uuid()) @db.Uuid
-  tenantId     String   @db.Uuid
-  accountCode  String
-  accountName  String
-  accountType  String // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
-  parentCode   String?
-  status       String   @default("active")
-  createdAt    DateTime @default(now()) @db.Timestamptz
-  updatedAt    DateTime @updatedAt @db.Timestamptz
+  id            String  @id @default(uuid()) @db.Uuid
+  tenantId      String  @db.Uuid
+  periodId      String  @db.Uuid // all master data lives under a period
+  accountCode   String
+  accountName   String
+  accountType   String // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  accountNature String // DEBIT, CREDIT — normal balance side
+  parentCode    String?
+  rollupWeight  Decimal @default(1) @db.Decimal(9, 4) // multiplier applied when summing into parent (+1 normal, -1 contra accounts)
+  status        String  @default("active")
+  customFields  Json?
+
+  // Statement mapping (for financial statement generation)
+  statementType    String? // BALANCE_SHEET | PROFIT_AND_LOSS | CASH_FLOW | EQUITY_STATEMENT
+  cashFlowCategory String? // OPERATING | INVESTING | FINANCING | NON_CASH — relevant for Cash Flow Statement
+
+  // IFRS metadata
+  ifrsReference String? // primary IFRS/IAS standard, e.g. "IAS 16", "IFRS 15"
+
+  // Reconciliation flags
+  requiresIntercompanyRecon Boolean @default(false) // intercompany balance must be reconciled before close
+  requiresOtherRecon        Boolean @default(false) // account must be reconciled to an external schedule
+
+  // FX translation
+  rateType String? // references RateType.code — which FX rate type applies for consolidation translation
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  tenant  Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  period Period @relation(fields: [periodId], references: [id], onDelete: Cascade)
 
-  @@unique([tenantId, accountCode])
+  @@unique([tenantId, periodId, accountCode])
   @@index([tenantId])
+  @@index([periodId])
   @@index([accountType])
 }
 
 model Dimension {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @db.Uuid
-  name        String
-  type        String   // e.g., "COST_CENTER", "DEPARTMENT"
-  status      String   @default("active")
-  createdAt   DateTime @default(now()) @db.Timestamptz
-  updatedAt   DateTime @updatedAt @db.Timestamptz
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  periodId     String   @db.Uuid // all master data lives under a period
+  name         String
+  type         String // e.g., "COST_CENTER", "DEPARTMENT"
+  status       String   @default("active")
+  isSystem     Boolean  @default(false) // system dimensions (e.g. FlowCode) cannot be renamed or deleted by users
+  customFields Json?
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  updatedAt    DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  tenant  Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  members DimensionMember[]
+  tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  period         Period                 @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  members        DimensionMember[]
+  // Rules that constrain THIS dimension (this dimension is the target/right-hand side).
+  accountRules   DimensionAccountRule[]   @relation("RuleTargetDimension")
+  // Conditions keyed off THIS dimension's members as one leg of a (possibly multi-key) rule
+  // (e.g. Department -> Cost Center, or Account AND Department -> Cost Center together).
+  sourceForRules DimensionRuleCondition[] @relation("RuleSourceDimension")
 
-  @@unique([tenantId, name])
+  @@unique([tenantId, periodId, name])
   @@index([tenantId])
+  @@index([periodId])
 }
 
 model DimensionMember {
@@ -250,6 +516,8 @@ model DimensionMember {
   dimensionId String   @db.Uuid
   code        String
   name        String
+  parentCode  String? // self-reference by code (scoped to dimensionId) — mirrors ChartOfAccount.parentCode
+  weight      Decimal  @default(1) @db.Decimal(9, 4) // multiplier applied when rolling up into parent (e.g. +1, -1)
   status      String   @default("active")
   createdAt   DateTime @default(now()) @db.Timestamptz
 
@@ -258,6 +526,62 @@ model DimensionMember {
 
   @@unique([dimensionId, code])
   @@index([dimensionId])
+}
+
+// Defines whether a dimension is Mandatory / Optional / Prohibited given one or more source
+// conditions — each condition keys off either the Chart of Accounts (sourceDimensionId = null) or
+// another Dimension's members (e.g. Department -> Cost Center). A rule with 2+ conditions matches
+// only when ALL of them match simultaneously (AND), enabling combination rules across dimensions
+// (e.g. Account range AND Department range together determine Cost Center's allowed range) — not
+// just a single source axis at a time. Also carries an optional member range restricting which
+// target-dimension members are allowed, and an optional preset member to auto-fill when Mandatory
+// and the preparer hasn't picked one (e.g. FlowCode's Cash/Non-Cash default per account).
+//
+// Resolution: among rules whose conditions all match, the most specific one wins — specificity is
+// the product of each condition's range size (narrower ranges and more conditions both narrow the
+// match set). If no rule matches, applicability falls back to Mandatory for system dimensions (e.g.
+// FlowCode — "always mandatory unless explicitly marked otherwise") and Optional for regular
+// dimensions (Cost Center, Department, Project, ...).
+model DimensionAccountRule {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  periodId String @db.Uuid
+
+  // Target axis: the dimension being constrained.
+  dimensionId       String   @db.Uuid
+  applicability     String // MANDATORY | OPTIONAL | PROHIBITED
+  memberRange       String? // which target-dimension member codes are allowed; null = any member allowed
+  defaultMemberCode String? // preset DimensionMember.code, used to auto-fill when applicability = MANDATORY
+  priority          Int      @default(0) // tie-breaker when two rules' specificity is equal; higher wins
+  createdAt         DateTime @default(now()) @db.Timestamptz
+  updatedAt         DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  tenant     Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  period     Period                   @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  dimension  Dimension                @relation("RuleTargetDimension", fields: [dimensionId], references: [id], onDelete: Cascade)
+  conditions DimensionRuleCondition[]
+
+  @@index([tenantId])
+  @@index([periodId])
+  @@index([dimensionId])
+}
+
+// One leg of a DimensionAccountRule's source condition — a rule matches only when every one of its
+// conditions matches (AND). sourceDimensionId = null means the condition keys off the Chart of
+// Accounts; otherwise it keys off another Dimension's member codes.
+model DimensionRuleCondition {
+  id                String  @id @default(uuid()) @db.Uuid
+  ruleId            String  @db.Uuid
+  sourceDimensionId String? @db.Uuid
+  sourceRange       String // account-code or source-dimension-member-code range, e.g. "11100..11999,12100"
+
+  // Relations
+  rule            DimensionAccountRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  sourceDimension Dimension?           @relation("RuleSourceDimension", fields: [sourceDimensionId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+  @@index([sourceDimensionId])
 }
 
 model Scenario {
@@ -276,23 +600,23 @@ model Scenario {
 
 // ==================== TRIAL BALANCE & DATA ====================
 model TrialBalance {
-  id           String   @id @default(uuid()) @db.Uuid
-  tenantId     String   @db.Uuid
-  periodId     String   @db.Uuid
-  entityId     String?  @db.Uuid
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @db.Uuid
+  periodId     String    @db.Uuid
+  entityId     String?   @db.Uuid
   importId     String?
-  status       String   @default("draft") // draft, submitted, approved, locked
-  totalDebits  Decimal  @db.Decimal(20, 6)
-  totalCredits Decimal  @db.Decimal(20, 6)
-  createdAt    DateTime @default(now()) @db.Timestamptz
-  updatedAt    DateTime @updatedAt @db.Timestamptz
+  status       String    @default("draft") // draft, submitted, approved, locked
+  totalDebits  Decimal   @db.Decimal(20, 6)
+  totalCredits Decimal   @db.Decimal(20, 6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @db.Timestamptz
   submittedAt  DateTime?
   approvedAt   DateTime?
 
   // Relations
-  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  period  Period  @relation(fields: [periodId], references: [id], onDelete: Cascade)
-  rows    TrialBalanceRow[]
+  tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  period Period            @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  rows   TrialBalanceRow[]
 
   @@unique([tenantId, periodId, entityId])
   @@index([tenantId, periodId])
@@ -300,13 +624,13 @@ model TrialBalance {
 }
 
 model TrialBalanceRow {
-  id              String   @id @default(uuid()) @db.Uuid
-  trialBalanceId  String   @db.Uuid
-  accountCode     String
-  accountName     String
-  debit           Decimal  @db.Decimal(20, 6)
-  credit          Decimal  @db.Decimal(20, 6)
-  createdAt       DateTime @default(now()) @db.Timestamptz
+  id             String   @id @default(uuid()) @db.Uuid
+  trialBalanceId String   @db.Uuid
+  accountCode    String
+  accountName    String
+  debit          Decimal  @db.Decimal(20, 6)
+  credit         Decimal  @db.Decimal(20, 6)
+  createdAt      DateTime @default(now()) @db.Timestamptz
 
   // Relations
   trialBalance TrialBalance @relation(fields: [trialBalanceId], references: [id], onDelete: Cascade)
@@ -325,8 +649,8 @@ model Consolidation {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  period  Period  @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  tenant  Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  period  Period                @relation(fields: [periodId], references: [id], onDelete: Cascade)
   results ConsolidationResult[]
 
   @@index([tenantId, periodId])
@@ -334,11 +658,11 @@ model Consolidation {
 }
 
 model ConsolidationResult {
-  id              String   @id @default(uuid()) @db.Uuid
-  consolidationId String   @db.Uuid
+  id              String  @id @default(uuid()) @db.Uuid
+  consolidationId String  @db.Uuid
   accountCode     String
-  amount          Decimal  @db.Decimal(20, 6)
-  currency        String   @db.VarChar(3)
+  amount          Decimal @db.Decimal(20, 6)
+  currency        String  @db.VarChar(3)
 
   // Relations
   consolidation Consolidation @relation(fields: [consolidationId], references: [id], onDelete: Cascade)
@@ -352,8 +676,8 @@ model AuditLog {
   id        String   @id @default(uuid()) @db.Uuid
   tenantId  String   @db.Uuid
   userId    String   @db.Uuid
-  action    String   // e.g., "TB_SUBMITTED", "CONSOLIDATION_RUN"
-  entity    String   // e.g., "TrialBalance", "Consolidation"
+  action    String // e.g., "TB_SUBMITTED", "CONSOLIDATION_RUN"
+  entity    String // e.g., "TrialBalance", "Consolidation"
   entityId  String
   details   Json?
   createdAt DateTime @default(now()) @db.Timestamptz
